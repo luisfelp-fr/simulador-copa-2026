@@ -326,6 +326,10 @@ with tab_sim:
         if champ:
             st.success(f"🏆 Campeão simulado: **{NAME(champ)}**")
 
+        # chaveamento visual refletindo os palpites atuais
+        st.markdown(bracket.bracket_html(sim_games), unsafe_allow_html=True)
+
+        st.markdown(branding.section_title("Preencha os confrontos"), unsafe_allow_html=True)
         for stage in KO_STAGE_ORDER:
             st.markdown(f"**{dm.STAGE_LABELS[stage]}**")
             for no in sorted(g.no for g in sim_games.values() if g.stage == stage):
@@ -351,65 +355,3 @@ with tab_sim:
                     st.session_state[f"sim_ko_{no}_so"] = (
                         g.home_code if lbl == g.home_label
                         else g.away_code if lbl == g.away_label else None)
-
-    st.markdown(branding.section_title("Editor manual — fase de grupos"), unsafe_allow_html=True)
-    st.caption(tooltips.HELP["editor_manual"])
-    base = pd.DataFrame([{
-        "id": m.id, "Grupo": m.group, "Casa": NAME(m.home), "Fora": NAME(m.away),
-        "Gols Casa": m.home_goals, "Gols Fora": m.away_goals,
-    } for m in gmatches])
-    edited = st.data_editor(
-        base, hide_index=True, width="stretch", key="adm_groups_editor",
-        disabled=["id", "Grupo", "Casa", "Fora"],
-        column_config={
-            "id": None,
-            "Gols Casa": st.column_config.NumberColumn(min_value=0, step=1),
-            "Gols Fora": st.column_config.NumberColumn(min_value=0, step=1),
-        },
-    )
-    if st.button("💾 Salvar placares (grupos)"):
-        for _, row in edited.iterrows():
-            hg, ag = row["Gols Casa"], row["Gols Fora"]
-            if pd.notna(hg) and pd.notna(ag):
-                state.set_group_result(results, row["id"], int(hg), int(ag), source="manual")
-            else:
-                state.clear_group_result(results, row["id"])
-        state.save_results(results)
-        st.success("Placares salvos.")
-        st.rerun()
-
-    # editor de mata-mata (quando há confrontos resolvidos)
-    games = knockout.compute_knockout(tables, gmatches, td.TEAMS, state.ko_results(results), alloc)
-    resolved = [g for g in games.values() if g.resolved]
-    if resolved:
-        st.markdown(branding.section_title("Editor manual — mata-mata"), unsafe_allow_html=True)
-        kdf = pd.DataFrame([{
-            "no": g.no, "Fase": dm.STAGE_LABELS[g.stage],
-            "Casa": g.home_label, "Fora": g.away_label,
-            "Gols Casa": g.home_goals, "Gols Fora": g.away_goals,
-        } for g in sorted(resolved, key=lambda x: x.no)])
-        ked = st.data_editor(
-            kdf, hide_index=True, width="stretch", key="adm_ko_editor",
-            disabled=["no", "Fase", "Casa", "Fora"],
-            column_config={
-                "no": None,
-                "Gols Casa": st.column_config.NumberColumn(min_value=0, step=1),
-                "Gols Fora": st.column_config.NumberColumn(min_value=0, step=1),
-            },
-        )
-        if st.button("💾 Salvar placares (mata-mata)"):
-            for _, row in ked.iterrows():
-                hg, ag = row["Gols Casa"], row["Gols Fora"]
-                if pd.notna(hg) and pd.notna(ag):
-                    state.set_ko_result(results, int(row["no"]), int(hg), int(ag), source="manual")
-                else:
-                    state.clear_ko_result(results, int(row["no"]))
-            state.save_results(results)
-            st.success("Placares do mata-mata salvos.")
-            st.rerun()
-
-    st.divider()
-    if st.button("🗑️ Apagar TODOS os resultados"):
-        st.session_state.results = state.empty_results()
-        state.save_results(st.session_state.results)
-        st.rerun()
