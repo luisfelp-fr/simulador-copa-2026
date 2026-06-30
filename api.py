@@ -392,8 +392,12 @@ def clear_all_results():
 
 @app.post("/api/refresh", response_model=sc.RefreshOut, tags=["admin"])
 def refresh_from_api():
-    """Importa resultados das APIs externas de futebol (sem sobrescrever placares
-    manuais). Lê as chaves de ``FOOTBALL_DATA_TOKEN`` e ``API_FOOTBALL_KEY``."""
+    """Importa resultados das fontes externas (sem sobrescrever placares manuais).
+
+    Funciona **sem nenhuma chave** (usa a API pública da ESPN como fallback). As
+    chaves opcionais ``FOOTBALL_DATA_TOKEN`` e ``API_FOOTBALL_KEY``, se definidas
+    no ambiente, têm prioridade.
+    """
     fd_token = os.environ.get("FOOTBALL_DATA_TOKEN")
     af_key = os.environ.get("API_FOOTBALL_KEY")
     records, msg = data_sources.fetch_results(fd_token, af_key)

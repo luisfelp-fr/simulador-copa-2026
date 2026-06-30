@@ -4,10 +4,10 @@ Textos de ajuda centralizados (padrão do projeto Argus).
 from __future__ import annotations
 
 HELP = {
-    "atualizar_api": "Busca os resultados mais recentes nas APIs configuradas "
-                     "(football-data.org / API-Football) e atualiza a fase de "
-                     "grupos. Edições manuais têm prioridade e não são "
-                     "sobrescritas.",
+    "atualizar_api": "Busca os resultados mais recentes e atualiza a fase de "
+                     "grupos. Funciona SEM chave (usa a API pública da ESPN); "
+                     "se você configurar football-data.org / API-Football, elas "
+                     "têm prioridade. Edições manuais nunca são sobrescritas.",
     "editor_manual": "Digite os placares dos jogos. A classificação e o "
                      "chaveamento são recalculados automaticamente. Deixe em "
                      "branco para marcar como 'não disputado'.",

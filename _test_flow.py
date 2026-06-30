@@ -9,6 +9,100 @@ import state
 import tournament_data as td
 
 
+# Amostra sintética no formato do scoreboard da ESPN (sem rede).
+ESPN_SAMPLE = {
+    "events": [
+        {  # jogo de grupo concluído: México 2 x 1 África do Sul
+            "competitions": [{
+                "status": {"type": {"completed": True}},
+                "competitors": [
+                    {"homeAway": "home", "score": "2",
+                     "team": {"abbreviation": "MEX", "displayName": "Mexico"}},
+                    {"homeAway": "away", "score": "1",
+                     "team": {"abbreviation": "RSA", "displayName": "South Africa"}},
+                ],
+            }],
+        },
+        {  # ainda não concluído -> ignorado
+            "competitions": [{
+                "status": {"type": {"completed": False}},
+                "competitors": [
+                    {"homeAway": "home", "score": "0",
+                     "team": {"abbreviation": "BRA", "displayName": "Brazil"}},
+                    {"homeAway": "away", "score": "0",
+                     "team": {"abbreviation": "MAR", "displayName": "Morocco"}},
+                ],
+            }],
+        },
+        {  # times de grupos diferentes -> estágio 'ko'
+            "competitions": [{
+                "status": {"type": {"completed": True}},
+                "competitors": [
+                    {"homeAway": "home", "score": "3",
+                     "team": {"abbreviation": "BRA", "displayName": "Brazil"}},
+                    {"homeAway": "away", "score": "1",
+                     "team": {"abbreviation": "ARG", "displayName": "Argentina"}},
+                ],
+            }],
+        },
+        {  # resolução por displayName quando a sigla é desconhecida (Bósnia)
+            "competitions": [{
+                "status": {"type": {"completed": True}},
+                "competitors": [
+                    {"homeAway": "home", "score": "1",
+                     "team": {"abbreviation": "CAN", "displayName": "Canada"}},
+                    {"homeAway": "away", "score": "1",
+                     "team": {"abbreviation": "BHZ", "displayName": "Bosnia & Herzegovina"}},
+                ],
+            }],
+        },
+    ]
+}
+
+
+def test_parse_espn():
+    recs = data_sources._parse_espn(ESPN_SAMPLE)
+    assert len(recs) == 3, recs  # o jogo não concluído é ignorado
+    by_pair = {frozenset((r["home"], r["away"])): r for r in recs}
+
+    a1 = by_pair[frozenset(("MEX", "RSA"))]
+    assert a1 == {"group": "A", "home": "MEX", "away": "RSA",
+                  "hg": 2, "ag": 1, "stage": "group"}, a1
+
+    ko = by_pair[frozenset(("BRA", "ARG"))]
+    assert ko["stage"] == "ko", ko  # grupos diferentes
+
+    bih = by_pair[frozenset(("CAN", "BIH"))]  # sigla 'BHZ' resolvida por nome
+    assert bih["group"] == "B" and bih["stage"] == "group", bih
+    print("ok  test_parse_espn")
+
+
+def test_espn_feeds_import():
+    results = state.empty_results()
+    recs = data_sources._parse_espn(ESPN_SAMPLE)
+    n = state.import_api_results(results, recs)  # só registros 'group' entram
+    assert n == 2, n  # MEXxRSA e CANxBIH; BRAxARG é 'ko' e é ignorado
+    assert results["groups"]["A1"] == {"hg": 2, "ag": 1, "source": "api"}
+    print("ok  test_espn_feeds_import")
+
+
+def test_fetch_results_uses_espn_without_keys():
+    sample = [{"group": "C", "home": "BRA", "away": "MAR",
+               "hg": 1, "ag": 0, "stage": "group"}]
+    orig = data_sources.fetch_espn
+    data_sources.fetch_espn = lambda *a, **k: sample  # evita rede
+    try:
+        res, msg = data_sources.fetch_results()  # sem nenhuma chave
+        assert res == sample, res
+        assert "ESPN" in msg, msg
+    finally:
+        data_sources.fetch_espn = orig
+    # com ESPN desligado e sem chaves: nada, sem tocar a rede
+    res, msg = data_sources.fetch_results(use_espn=False)
+    assert res == [] and "manual" in msg, msg
+    print("ok  test_fetch_results_uses_espn_without_keys")
+
+
 def test_api_import_orientation_and_priority():
     results = state.empty_results()
     # A1 (semente) = MEX x RSA. A API traz invertido: RSA 2 x 1 MEX.
@@ -49,6 +143,9 @@ def test_code_from_resolution():
 
 
 if __name__ == "__main__":
+    test_parse_espn()
+    test_espn_feeds_import()
+    test_fetch_results_uses_espn_without_keys()
     test_api_import_orientation_and_priority()
     test_phase_transition()
     test_code_from_resolution()

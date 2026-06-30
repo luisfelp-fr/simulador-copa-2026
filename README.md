@@ -58,8 +58,9 @@ curl -X POST localhost:8000/api/simulate -H 'Content-Type: application/json' \
      -d '{"groups": [{"match_id": "C1", "home_goals": 3, "away_goals": 0}]}'
 ```
 
-A importação automática (`POST /api/refresh`) lê as chaves das variáveis de
-ambiente `FOOTBALL_DATA_TOKEN` e `API_FOOTBALL_KEY` (ambas opcionais).
+A importação automática (`POST /api/refresh`) funciona **sem chave** (usa a API
+pública da ESPN). As variáveis de ambiente `FOOTBALL_DATA_TOKEN` e
+`API_FOOTBALL_KEY`, se definidas, têm prioridade.
 
 ## As 5 abas
 
@@ -84,9 +85,11 @@ O sistema se adapta à fase real do torneio:
 
 1. **Semente real** — sorteio oficial de 05/12/2025 (48 seleções, 12 grupos A–L)
    e calendário/sedes aproximados, em `tournament_data.py`.
-2. **API automática** (opcional) — `football-data.org` (primária) e `API-Football`
-   (reserva). Configure as chaves em `.streamlit/secrets.toml`
-   (veja `secrets.toml.example`). Sem chaves, o app funciona 100% no modo manual.
+2. **API automática** — busca os placares e funciona **sem nenhuma chave**:
+   a fonte padrão é a **API pública da ESPN** (`fifa.world`, keyless). Se você
+   configurar `football-data.org` e/ou `API-Football` em `.streamlit/secrets.toml`
+   (veja `secrets.toml.example`), elas têm prioridade. A ordem de tentativa é
+   football-data.org → API-Football → ESPN.
 3. **Override manual** — placares digitados no Admin têm **prioridade** e
    persistem em `data/results.json`.
 

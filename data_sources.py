@@ -1,12 +1,16 @@
 """
 Camada de dados externa (busca automática de resultados) — best-effort
 ----------------------------------------------------------------------
-Adapters para APIs gratuitas de futebol. A fonte primária é a football-data.org
-(competição ``WC``); a reserva é a API-Football (liga 1, season 2026). Ambas são
-opcionais: sem chave/sem internet, as funções devolvem ``[]`` e o app segue
-funcionando com a entrada manual.
+Adapters para APIs de futebol. Três fontes, tentadas nesta ordem:
 
-As chaves ficam em ``st.secrets`` (nunca no código):
+    1. football-data.org  (competição ``WC``)        — requer chave gratuita
+    2. API-Football       (liga 1, season 2026)      — requer chave gratuita
+    3. ESPN               (``fifa.world`` scoreboard) — *SEM CHAVE*
+
+A fonte da ESPN é pública e **não exige cadastro nem chave**: por isso o botão
+"Atualizar da API" funciona mesmo sem nenhuma chave configurada. As chaves das
+duas primeiras continuam opcionais (melhoram a confiabilidade) e ficam em
+``st.secrets`` (nunca no código):
 
     [football_data]
     token = "sua-chave"
@@ -32,6 +36,12 @@ import tournament_data as td
 FOOTBALL_DATA_BASE = "https://api.football-data.org/v4"
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
 
+# ESPN — API pública e sem chave. Slug "fifa.world" = Copa do Mundo FIFA.
+ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+ESPN_LEAGUE = "fifa.world"
+# janela do torneio (para varrer todas as datas de uma vez)
+WC_START, WC_END = "20260611", "20260719"
+
 # nomes em inglês / apelidos por código FIFA, para casar respostas de API
 _EN_ALIASES = {
     "MEX": ["mexico"], "RSA": ["south africa"], "KOR": ["south korea", "korea republic", "korea"],
@@ -47,6 +57,10 @@ _EN_ALIASES = {
     "AUT": ["austria"], "ALG": ["algeria"], "JOR": ["jordan"], "POR": ["portugal"], "COL": ["colombia"],
     "UZB": ["uzbekistan"], "COD": ["dr congo", "congo dr", "democratic republic of congo"],
     "ENG": ["england"], "CRO": ["croatia"], "GHA": ["ghana"], "PAN": ["panama"],
+    # formas adicionais usadas pela ESPN
+    "BIH": ["bosnia & herzegovina", "bosnia and herzegovina"],
+    "KOR": ["republic of korea"], "IRN": ["islamic republic of iran"],
+    "CIV": ["cote d'ivoire"],
 }
 
 
@@ -142,31 +156,102 @@ def fetch_api_football(key: str, timeout: int = 12) -> list[dict]:
     return out
 
 
+# --- ESPN (sem chave) -------------------------------------------------------
+def _parse_espn(payload: dict) -> list[dict]:
+    """Normaliza a resposta do scoreboard da ESPN para o formato interno.
+
+    Considera apenas jogos concluídos. O estágio ('group' ou 'ko') é inferido
+    pelos grupos-semente dos dois times — mais robusto do que depender dos
+    rótulos da fonte: se ambos pertencem ao mesmo grupo, é jogo de grupo.
+    """
+    out: list[dict] = []
+    for ev in payload.get("events", []) or []:
+        comps = ev.get("competitions") or []
+        if not comps:
+            continue
+        comp = comps[0]
+        stype = (comp.get("status") or ev.get("status") or {}).get("type") or {}
+        if not stype.get("completed"):
+            continue
+        home = away = None
+        hg = ag = None
+        for c in comp.get("competitors") or []:
+            team = c.get("team") or {}
+            code = (code_from(team.get("abbreviation"))
+                    or code_from(team.get("displayName"))
+                    or code_from(team.get("name"))
+                    or code_from(team.get("shortDisplayName")))
+            try:
+                score = int(c.get("score"))
+            except (TypeError, ValueError):
+                score = None
+            if c.get("homeAway") == "home":
+                home, hg = code, score
+            elif c.get("homeAway") == "away":
+                away, ag = code, score
+        if not home or not away or hg is None or ag is None:
+            continue
+        g_home = td.TEAMS[home].group
+        g_away = td.TEAMS[away].group
+        out.append({
+            "group": g_home,
+            "home": home, "away": away, "hg": hg, "ag": ag,
+            "stage": "group" if g_home == g_away else "ko",
+        })
+    return out
+
+
+def fetch_espn(timeout: int = 12, start: str = WC_START, end: str = WC_END) -> list[dict]:
+    """Busca resultados na API pública da ESPN (não requer chave)."""
+    if not requests:
+        return []
+    url = f"{ESPN_BASE}/{ESPN_LEAGUE}/scoreboard"
+    params = {"dates": f"{start}-{end}", "limit": 400}
+    r = requests.get(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    return _parse_espn(r.json())
+
+
 def fetch_results(fd_token: str | None = None,
-                  af_key: str | None = None) -> tuple[list[dict], str]:
-    """Tenta a fonte primária e depois a reserva.
+                  af_key: str | None = None,
+                  use_espn: bool = True) -> tuple[list[dict], str]:
+    """Tenta as fontes em ordem e devolve a primeira que trouxer resultados.
+
+    Ordem: football-data.org (se houver chave) -> API-Football (se houver chave)
+    -> ESPN (sem chave). A ESPN garante que a atualização automática funcione
+    mesmo sem nenhuma chave configurada.
 
     Returns:
         (resultados_normalizados, mensagem_de_status)
     """
+    attempts: list[str] = []
+
     if fd_token:
         try:
             res = fetch_football_data(fd_token)
             if res:
                 return res, f"football-data.org: {len(res)} resultados."
+            attempts.append("football-data.org: sem resultados")
         except Exception as exc:  # noqa: BLE001
-            primary_err = str(exc)
-        else:
-            primary_err = "sem resultados"
-    else:
-        primary_err = "sem chave"
+            attempts.append(f"football-data.org: {exc}")
 
     if af_key:
         try:
             res = fetch_api_football(af_key)
             if res:
                 return res, f"API-Football: {len(res)} resultados."
+            attempts.append("API-Football: sem resultados")
         except Exception as exc:  # noqa: BLE001
-            return [], f"Falha nas duas fontes (primária: {primary_err}; reserva: {exc})."
+            attempts.append(f"API-Football: {exc}")
 
-    return [], f"Sem dados automáticos (primária: {primary_err}). Use a entrada manual."
+    if use_espn:
+        try:
+            res = fetch_espn()
+            if res:
+                return res, f"ESPN (sem chave): {len(res)} resultados."
+            attempts.append("ESPN: sem resultados")
+        except Exception as exc:  # noqa: BLE001
+            attempts.append(f"ESPN: {exc}")
+
+    detail = "; ".join(attempts) if attempts else "nenhuma fonte disponível"
+    return [], f"Sem dados automáticos ({detail}). Use a entrada manual."

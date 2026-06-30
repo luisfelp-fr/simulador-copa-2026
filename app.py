@@ -293,8 +293,11 @@ with tab_adm:
 
     fd_token = st.secrets.get("football_data", {}).get("token") if hasattr(st, "secrets") else None
     af_key = st.secrets.get("api_football", {}).get("key") if hasattr(st, "secrets") else None
-    st.write(f"football-data.org: {'🔑 configurada' if fd_token else '— sem chave'}  ·  "
+    st.write(f"ESPN: ✅ sem chave (sempre disponível)  ·  "
+             f"football-data.org: {'🔑 configurada' if fd_token else '— sem chave'}  ·  "
              f"API-Football: {'🔑 configurada' if af_key else '— sem chave'}")
+    if not fd_token and not af_key:
+        st.caption("Nenhuma chave configurada — a atualização usa a API pública da ESPN.")
 
     if st.button("🔄 Atualizar da API"):
         with st.spinner("Buscando resultados..."):
