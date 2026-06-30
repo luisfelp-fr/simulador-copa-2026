@@ -77,6 +77,17 @@ def test_parse_espn():
     print("ok  test_parse_espn")
 
 
+def test_espn_games_raw():
+    games = data_sources._espn_games(ESPN_SAMPLE)
+    assert len(games) == 4, games  # todos os eventos, concluídos ou não
+    not_done = [g for g in games if not g["completed"]]
+    assert len(not_done) == 1  # BRA x MAR ainda não concluído
+    bih = next(g for g in games if g["away"] == "BIH")
+    assert bih["away_name"] == "Bosnia & Herzegovina"  # nome bruto preservado
+    assert bih["home"] == "CAN"
+    print("ok  test_espn_games_raw")
+
+
 def test_espn_feeds_import():
     results = state.empty_results()
     recs = data_sources._parse_espn(ESPN_SAMPLE)
@@ -144,6 +155,7 @@ def test_code_from_resolution():
 
 if __name__ == "__main__":
     test_parse_espn()
+    test_espn_games_raw()
     test_espn_feeds_import()
     test_fetch_results_uses_espn_without_keys()
     test_api_import_orientation_and_priority()

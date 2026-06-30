@@ -17,6 +17,28 @@ uvicorn api:app --reload    # API REST (http://localhost:8000)
 O painel e a API compartilham o **mesmo estado** (`data/results.json`): o que
 for salvo num lado aparece no outro.
 
+## Trazer os resultados reais (sem chave)
+
+Para puxar os placares dos jogos **já disputados** de uma fonte pública (ESPN,
+**sem precisar de nenhuma chave**), rode na sua máquina (com internet):
+
+```bash
+python sync_results.py            # diagnóstico: mostra o que a API trouxe e o que casou
+python sync_results.py --save     # grava os resultados em data/results.json
+python sync_results.py --raw      # lista todos os confrontos retornados (p/ comparar com o seed)
+```
+
+Depois, abra o painel (`streamlit run app.py`) ou a API — os resultados já
+aparecem. O script **nunca inventa placares**: se não houver internet ou jogos
+disputados, ele explica o motivo. E se a fonte retornar seleções que não existem
+no seed (`tournament_data.py`), ele avisa — sinal de que o sorteio do código
+precisa ser ajustado para bater com a Copa real.
+
+> ⚠️ Chaves de API são **pessoais e secretas**: nunca devem ser commitadas no
+> repositório. Por isso a fonte padrão é keyless. Se quiser usar
+> football-data.org / API-Football (mais estáveis), gere sua chave gratuita e
+> coloque em `.streamlit/secrets.toml` — ela fica só na sua máquina.
+
 ## API REST
 
 Camada HTTP/JSON (`api.py`, FastAPI) para consultar os resultados de fora do

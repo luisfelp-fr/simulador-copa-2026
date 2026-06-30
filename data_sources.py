@@ -157,26 +157,32 @@ def fetch_api_football(key: str, timeout: int = 12) -> list[dict]:
 
 
 # --- ESPN (sem chave) -------------------------------------------------------
-def _parse_espn(payload: dict) -> list[dict]:
-    """Normaliza a resposta do scoreboard da ESPN para o formato interno.
+def _espn_games(payload: dict) -> list[dict]:
+    """Extrai TODOS os jogos de um scoreboard da ESPN (resolvidos ou não).
 
-    Considera apenas jogos concluídos. O estágio ('group' ou 'ko') é inferido
-    pelos grupos-semente dos dois times — mais robusto do que depender dos
-    rótulos da fonte: se ambos pertencem ao mesmo grupo, é jogo de grupo.
+    Devolve dicts com os nomes BRUTOS vindos da fonte e os códigos resolvidos
+    (ou ``None``) — base tanto da importação quanto do diagnóstico de
+    divergências entre o seed do código e a Copa real::
+
+        {"completed": bool,
+         "home_name": str, "away_name": str,   # como a ESPN devolve
+         "home": str|None, "away": str|None,    # código FIFA resolvido
+         "hg": int|None, "ag": int|None}
     """
-    out: list[dict] = []
+    games: list[dict] = []
     for ev in payload.get("events", []) or []:
         comps = ev.get("competitions") or []
         if not comps:
             continue
         comp = comps[0]
         stype = (comp.get("status") or ev.get("status") or {}).get("type") or {}
-        if not stype.get("completed"):
-            continue
-        home = away = None
-        hg = ag = None
+        rec = {"completed": bool(stype.get("completed")),
+               "home_name": None, "away_name": None,
+               "home": None, "away": None, "hg": None, "ag": None}
         for c in comp.get("competitors") or []:
             team = c.get("team") or {}
+            name = (team.get("displayName") or team.get("name")
+                    or team.get("shortDisplayName") or team.get("abbreviation"))
             code = (code_from(team.get("abbreviation"))
                     or code_from(team.get("displayName"))
                     or code_from(team.get("name"))
@@ -186,9 +192,24 @@ def _parse_espn(payload: dict) -> list[dict]:
             except (TypeError, ValueError):
                 score = None
             if c.get("homeAway") == "home":
-                home, hg = code, score
+                rec["home_name"], rec["home"], rec["hg"] = name, code, score
             elif c.get("homeAway") == "away":
-                away, ag = code, score
+                rec["away_name"], rec["away"], rec["ag"] = name, code, score
+        games.append(rec)
+    return games
+
+
+def _normalize_games(games: list[dict]) -> list[dict]:
+    """Filtra jogos concluídos e resolvidos -> formato interno de resultados.
+
+    O estágio ('group'/'ko') é inferido pelos grupos-semente dos dois times:
+    mesmo grupo => jogo de fase de grupos.
+    """
+    out: list[dict] = []
+    for g in games:
+        if not g["completed"]:
+            continue
+        home, away, hg, ag = g["home"], g["away"], g["hg"], g["ag"]
         if not home or not away or hg is None or ag is None:
             continue
         g_home = td.TEAMS[home].group
@@ -201,15 +222,32 @@ def _parse_espn(payload: dict) -> list[dict]:
     return out
 
 
-def fetch_espn(timeout: int = 12, start: str = WC_START, end: str = WC_END) -> list[dict]:
-    """Busca resultados na API pública da ESPN (não requer chave)."""
+def _parse_espn(payload: dict) -> list[dict]:
+    """Normaliza a resposta do scoreboard da ESPN para o formato interno."""
+    return _normalize_games(_espn_games(payload))
+
+
+def _espn_scoreboard(timeout: int = 12, start: str = WC_START,
+                     end: str = WC_END) -> dict:
+    """Chamada HTTP crua ao scoreboard público da ESPN (sem chave)."""
     if not requests:
-        return []
+        return {}
     url = f"{ESPN_BASE}/{ESPN_LEAGUE}/scoreboard"
     params = {"dates": f"{start}-{end}", "limit": 400}
     r = requests.get(url, params=params, timeout=timeout)
     r.raise_for_status()
-    return _parse_espn(r.json())
+    return r.json()
+
+
+def fetch_espn_games(timeout: int = 12, start: str = WC_START,
+                     end: str = WC_END) -> list[dict]:
+    """Busca o scoreboard BRUTO da ESPN (todos os jogos; para diagnóstico)."""
+    return _espn_games(_espn_scoreboard(timeout, start, end))
+
+
+def fetch_espn(timeout: int = 12, start: str = WC_START, end: str = WC_END) -> list[dict]:
+    """Busca resultados (concluídos) na API pública da ESPN (não requer chave)."""
+    return _normalize_games(_espn_games(_espn_scoreboard(timeout, start, end)))
 
 
 def fetch_results(fd_token: str | None = None,
