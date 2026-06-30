@@ -9,10 +9,14 @@ Executar:  streamlit run app.py
 """
 from __future__ import annotations
 
+import os
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
 import branding
+import bracket
 import data_model as dm
 import data_sources
 import knockout
@@ -26,6 +30,48 @@ st.set_page_config(page_title="Copa do Mundo 2026", page_icon="🏆", layout="wi
 
 NAME = td.name_of
 KO_STAGE_ORDER = [dm.R32, dm.R16, dm.QF, dm.SF, dm.THIRD, dm.FINAL]
+
+AUTO_SYNC_MINUTES = 15  # re-busca a API no máximo a cada N minutos
+
+
+# --------------------------------------------------------------------------- #
+# Atualização automática a partir da API
+# --------------------------------------------------------------------------- #
+def read_api_keys() -> tuple[str | None, str | None]:
+    """Chaves das fontes (secrets ou variáveis de ambiente). Tolera a ausência
+    total de secrets — caso do usuário keyless (só ESPN)."""
+    fd = af = None
+    try:
+        fd = st.secrets.get("football_data", {}).get("token")
+    except Exception:  # noqa: BLE001 - sem arquivo de secrets
+        fd = None
+    try:
+        af = st.secrets.get("api_football", {}).get("key")
+    except Exception:  # noqa: BLE001
+        af = None
+    return (fd or os.environ.get("FOOTBALL_DATA_TOKEN"),
+            af or os.environ.get("API_FOOTBALL_KEY"))
+
+
+def minutes_since_sync(results: dict) -> float:
+    """Minutos desde a última atualização automática (inf se nunca)."""
+    ts = results.get("synced_at")
+    if not ts:
+        return float("inf")
+    try:
+        return (datetime.now() - datetime.fromisoformat(ts)).total_seconds() / 60
+    except ValueError:
+        return float("inf")
+
+
+def run_api_sync(results: dict, fd_token, af_key) -> str:
+    """Busca da API, importa (sem sobrescrever edições manuais) e carimba o
+    horário da sincronização. Devolve a mensagem de status."""
+    records, msg = data_sources.fetch_results(fd_token, af_key)
+    n = state.import_api_results(results, records)
+    results["synced_at"] = datetime.now().isoformat(timespec="seconds")
+    state.save_results(results)
+    return f"{msg} ({n} jogos atualizados)"
 
 
 # --------------------------------------------------------------------------- #
@@ -75,6 +121,22 @@ if "results" not in st.session_state:
     st.session_state.results = state.load_results()
 results = st.session_state.results
 
+fd_token, af_key = read_api_keys()
+
+# --- Atualização automática ao abrir o site (e a cada AUTO_SYNC_MINUTES) -----
+# Busca apenas quando faz sentido: ao iniciar a sessão ou quando os dados
+# passam de AUTO_SYNC_MINUTES — nunca em cada interação. Falhas de rede são
+# silenciosas (fetch_results trata e o app segue com o que já tem).
+auto_on = st.session_state.get("auto_sync_enabled", True)
+_autosync_off = os.environ.get("COPA_DISABLE_AUTOSYNC") == "1"
+_mins = minutes_since_sync(results)
+_new_session = not st.session_state.get("_session_synced")
+if auto_on and not _autosync_off and (
+        _mins >= AUTO_SYNC_MINUTES or (_new_session and _mins >= 1.0)):
+    with st.spinner("Buscando resultados mais recentes da API..."):
+        st.session_state._auto_sync_msg = run_api_sync(results, fd_token, af_key)
+    st.session_state._session_synced = True
+
 gmatches = state.group_matches(results)
 tables = standings.compute_all_tables(gmatches, td.TEAMS)
 ranked_thirds, qualifying_groups = standings.best_third_placed(tables, td.TEAMS)
@@ -89,8 +151,27 @@ c1.metric("Jogos de grupo disputados", f"{played}/{total}")
 c2.metric("Fase atual", "Fase de Grupos" if phase == "groups" else "Mata-mata")
 c3.metric("Tabela 3º colocados (Anexo C)", "carregada" if alloc else "reserva (clusters)")
 
-tab_and, tab_cla, tab_ko, tab_sim, tab_adm = st.tabs(
-    ["🏆 Andamento", "📊 Classificação", "🔀 Mata-mata", "🎮 Simulador", "⚙️ Dados/Admin"]
+# Atualização da API direto na página inicial.
+_cinfo, _cbtn = st.columns([4, 1])
+with _cinfo:
+    _synced = results.get("synced_at")
+    _auto_msg = st.session_state.get("_auto_sync_msg")
+    if _synced:
+        _line = f"🔄 Última atualização: {_synced.replace('T', ' ')}"
+        if _auto_msg:
+            _line += f"  ·  {_auto_msg}"
+        st.caption(_line)
+    else:
+        st.caption("🔄 Atualização automática ligada — ao abrir o site os "
+                   "resultados são buscados na API.")
+with _cbtn:
+    if st.button("🔄 Atualizar agora", width="stretch"):
+        with st.spinner("Buscando resultados..."):
+            st.session_state._auto_sync_msg = run_api_sync(results, fd_token, af_key)
+        st.rerun()
+
+tab_and, tab_cla, tab_sim = st.tabs(
+    ["🏆 Andamento", "📊 Classificação", "🎮 Simulador"]
 )
 
 
@@ -125,7 +206,20 @@ with tab_and:
             } for m in upcoming[:10]])
             st.dataframe(df, hide_index=True, width="stretch")
         else:
-            st.success("Fase de grupos encerrada — confira o mata-mata!")
+            st.success("Fase de grupos encerrada — confira o chaveamento abaixo!")
+
+    # ---- Chaveamento do mata-mata (visual, com bandeiras) ------------------ #
+    st.markdown(branding.section_title("Chaveamento do Mata-mata"), unsafe_allow_html=True)
+    games = knockout.compute_knockout(tables, gmatches, td.TEAMS,
+                                      state.ko_results(results), alloc)
+    champ = knockout.champion(games)
+    if champ:
+        st.success(f"🏆 Campeão: **{NAME(champ)}**")
+    if phase == "groups":
+        st.caption("A fase de grupos ainda não terminou — os confrontos são "
+                   "*projeções* (posições/3º colocados) até os 12 grupos se "
+                   "encerrarem. Use o **Simulador** para testar cenários.")
+    st.markdown(bracket.bracket_html(games), unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -153,28 +247,7 @@ with tab_cla:
 
 
 # --------------------------------------------------------------------------- #
-# Aba 3 — Mata-mata
-# --------------------------------------------------------------------------- #
-with tab_ko:
-    st.markdown(branding.section_title("Chaveamento da Fase Eliminatória"), unsafe_allow_html=True)
-    if phase == "groups":
-        st.info("A fase de grupos ainda não terminou — o chaveamento abaixo mostra "
-                "*placeholders* e só é definido quando os 12 grupos se encerram. "
-                "Use o **Simulador** para projetar cenários.")
-    games = knockout.compute_knockout(tables, gmatches, td.TEAMS,
-                                      state.ko_results(results), alloc)
-    champ = knockout.champion(games)
-    if champ:
-        st.success(f"🏆 Campeão: **{NAME(champ)}**")
-
-    for stage in KO_STAGE_ORDER:
-        st.markdown(f"**{dm.STAGE_LABELS[stage]}**  ·  _{td.KO_STAGE_DATES.get(stage, '')}_")
-        for no in sorted(g.no for g in games.values() if g.stage == stage):
-            st.markdown(game_line(games[no]))
-
-
-# --------------------------------------------------------------------------- #
-# Aba 4 — Simulador
+# Aba 3 — Simulador
 # --------------------------------------------------------------------------- #
 with tab_sim:
     st.markdown(branding.section_title("Simulador 'e-se'"), unsafe_allow_html=True)
@@ -225,11 +298,7 @@ with tab_sim:
         st.markdown(branding.section_title("Projeção do mata-mata"), unsafe_allow_html=True)
         sim_games = knockout.compute_knockout(sim_tables, eff, td.TEAMS, {}, alloc)
         if all(standings.group_complete(g, eff) for g in td.GROUP_ORDER):
-            for stage in [dm.R32, dm.R16]:
-                st.markdown(f"**{dm.STAGE_LABELS[stage]}**")
-                for no in sorted(x.no for x in sim_games.values() if x.stage == stage):
-                    st.markdown(game_line(sim_games[no]))
-            st.caption("Preencha também os jogos do mata-mata na aba após o encerramento real dos grupos.")
+            st.markdown(bracket.bracket_html(sim_games), unsafe_allow_html=True)
         else:
             st.info("Preencha **todos** os jogos de grupo restantes para projetar o chaveamento completo.")
 
@@ -257,6 +326,10 @@ with tab_sim:
         if champ:
             st.success(f"🏆 Campeão simulado: **{NAME(champ)}**")
 
+        # chaveamento visual refletindo os palpites atuais
+        st.markdown(bracket.bracket_html(sim_games), unsafe_allow_html=True)
+
+        st.markdown(branding.section_title("Preencha os confrontos"), unsafe_allow_html=True)
         for stage in KO_STAGE_ORDER:
             st.markdown(f"**{dm.STAGE_LABELS[stage]}**")
             for no in sorted(g.no for g in sim_games.values() if g.stage == stage):
@@ -282,86 +355,3 @@ with tab_sim:
                     st.session_state[f"sim_ko_{no}_so"] = (
                         g.home_code if lbl == g.home_label
                         else g.away_code if lbl == g.away_label else None)
-
-
-# --------------------------------------------------------------------------- #
-# Aba 5 — Dados / Admin
-# --------------------------------------------------------------------------- #
-with tab_adm:
-    st.markdown(branding.section_title("Atualização automática (API)"), unsafe_allow_html=True)
-    st.caption(tooltips.HELP["atualizar_api"])
-
-    fd_token = st.secrets.get("football_data", {}).get("token") if hasattr(st, "secrets") else None
-    af_key = st.secrets.get("api_football", {}).get("key") if hasattr(st, "secrets") else None
-    st.write(f"football-data.org: {'🔑 configurada' if fd_token else '— sem chave'}  ·  "
-             f"API-Football: {'🔑 configurada' if af_key else '— sem chave'}")
-
-    if st.button("🔄 Atualizar da API"):
-        with st.spinner("Buscando resultados..."):
-            records, msg = data_sources.fetch_results(fd_token, af_key)
-            n = state.import_api_results(results, records)
-            state.save_results(results)
-        st.success(f"{msg}  ({n} jogos atualizados)")
-        st.rerun()
-
-    st.markdown(branding.section_title("Editor manual — fase de grupos"), unsafe_allow_html=True)
-    st.caption(tooltips.HELP["editor_manual"])
-    base = pd.DataFrame([{
-        "id": m.id, "Grupo": m.group, "Casa": NAME(m.home), "Fora": NAME(m.away),
-        "Gols Casa": m.home_goals, "Gols Fora": m.away_goals,
-    } for m in gmatches])
-    edited = st.data_editor(
-        base, hide_index=True, width="stretch", key="adm_groups_editor",
-        disabled=["id", "Grupo", "Casa", "Fora"],
-        column_config={
-            "id": None,
-            "Gols Casa": st.column_config.NumberColumn(min_value=0, step=1),
-            "Gols Fora": st.column_config.NumberColumn(min_value=0, step=1),
-        },
-    )
-    if st.button("💾 Salvar placares (grupos)"):
-        for _, row in edited.iterrows():
-            hg, ag = row["Gols Casa"], row["Gols Fora"]
-            if pd.notna(hg) and pd.notna(ag):
-                state.set_group_result(results, row["id"], int(hg), int(ag), source="manual")
-            else:
-                state.clear_group_result(results, row["id"])
-        state.save_results(results)
-        st.success("Placares salvos.")
-        st.rerun()
-
-    # editor de mata-mata (quando há confrontos resolvidos)
-    games = knockout.compute_knockout(tables, gmatches, td.TEAMS, state.ko_results(results), alloc)
-    resolved = [g for g in games.values() if g.resolved]
-    if resolved:
-        st.markdown(branding.section_title("Editor manual — mata-mata"), unsafe_allow_html=True)
-        kdf = pd.DataFrame([{
-            "no": g.no, "Fase": dm.STAGE_LABELS[g.stage],
-            "Casa": g.home_label, "Fora": g.away_label,
-            "Gols Casa": g.home_goals, "Gols Fora": g.away_goals,
-        } for g in sorted(resolved, key=lambda x: x.no)])
-        ked = st.data_editor(
-            kdf, hide_index=True, width="stretch", key="adm_ko_editor",
-            disabled=["no", "Fase", "Casa", "Fora"],
-            column_config={
-                "no": None,
-                "Gols Casa": st.column_config.NumberColumn(min_value=0, step=1),
-                "Gols Fora": st.column_config.NumberColumn(min_value=0, step=1),
-            },
-        )
-        if st.button("💾 Salvar placares (mata-mata)"):
-            for _, row in ked.iterrows():
-                hg, ag = row["Gols Casa"], row["Gols Fora"]
-                if pd.notna(hg) and pd.notna(ag):
-                    state.set_ko_result(results, int(row["no"]), int(hg), int(ag), source="manual")
-                else:
-                    state.clear_ko_result(results, int(row["no"]))
-            state.save_results(results)
-            st.success("Placares do mata-mata salvos.")
-            st.rerun()
-
-    st.divider()
-    if st.button("🗑️ Apagar TODOS os resultados"):
-        st.session_state.results = state.empty_results()
-        state.save_results(st.session_state.results)
-        st.rerun()
