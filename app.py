@@ -9,6 +9,9 @@ Executar:  streamlit run app.py
 """
 from __future__ import annotations
 
+import os
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -26,6 +29,48 @@ st.set_page_config(page_title="Copa do Mundo 2026", page_icon="🏆", layout="wi
 
 NAME = td.name_of
 KO_STAGE_ORDER = [dm.R32, dm.R16, dm.QF, dm.SF, dm.THIRD, dm.FINAL]
+
+AUTO_SYNC_MINUTES = 15  # re-busca a API no máximo a cada N minutos
+
+
+# --------------------------------------------------------------------------- #
+# Atualização automática a partir da API
+# --------------------------------------------------------------------------- #
+def read_api_keys() -> tuple[str | None, str | None]:
+    """Chaves das fontes (secrets ou variáveis de ambiente). Tolera a ausência
+    total de secrets — caso do usuário keyless (só ESPN)."""
+    fd = af = None
+    try:
+        fd = st.secrets.get("football_data", {}).get("token")
+    except Exception:  # noqa: BLE001 - sem arquivo de secrets
+        fd = None
+    try:
+        af = st.secrets.get("api_football", {}).get("key")
+    except Exception:  # noqa: BLE001
+        af = None
+    return (fd or os.environ.get("FOOTBALL_DATA_TOKEN"),
+            af or os.environ.get("API_FOOTBALL_KEY"))
+
+
+def minutes_since_sync(results: dict) -> float:
+    """Minutos desde a última atualização automática (inf se nunca)."""
+    ts = results.get("synced_at")
+    if not ts:
+        return float("inf")
+    try:
+        return (datetime.now() - datetime.fromisoformat(ts)).total_seconds() / 60
+    except ValueError:
+        return float("inf")
+
+
+def run_api_sync(results: dict, fd_token, af_key) -> str:
+    """Busca da API, importa (sem sobrescrever edições manuais) e carimba o
+    horário da sincronização. Devolve a mensagem de status."""
+    records, msg = data_sources.fetch_results(fd_token, af_key)
+    n = state.import_api_results(results, records)
+    results["synced_at"] = datetime.now().isoformat(timespec="seconds")
+    state.save_results(results)
+    return f"{msg} ({n} jogos atualizados)"
 
 
 # --------------------------------------------------------------------------- #
@@ -75,6 +120,22 @@ if "results" not in st.session_state:
     st.session_state.results = state.load_results()
 results = st.session_state.results
 
+fd_token, af_key = read_api_keys()
+
+# --- Atualização automática ao abrir o site (e a cada AUTO_SYNC_MINUTES) -----
+# Busca apenas quando faz sentido: ao iniciar a sessão ou quando os dados
+# passam de AUTO_SYNC_MINUTES — nunca em cada interação. Falhas de rede são
+# silenciosas (fetch_results trata e o app segue com o que já tem).
+auto_on = st.session_state.get("auto_sync_enabled", True)
+_autosync_off = os.environ.get("COPA_DISABLE_AUTOSYNC") == "1"
+_mins = minutes_since_sync(results)
+_new_session = not st.session_state.get("_session_synced")
+if auto_on and not _autosync_off and (
+        _mins >= AUTO_SYNC_MINUTES or (_new_session and _mins >= 1.0)):
+    with st.spinner("Buscando resultados mais recentes da API..."):
+        st.session_state._auto_sync_msg = run_api_sync(results, fd_token, af_key)
+    st.session_state._session_synced = True
+
 gmatches = state.group_matches(results)
 tables = standings.compute_all_tables(gmatches, td.TEAMS)
 ranked_thirds, qualifying_groups = standings.best_third_placed(tables, td.TEAMS)
@@ -88,6 +149,17 @@ c1, c2, c3 = st.columns(3)
 c1.metric("Jogos de grupo disputados", f"{played}/{total}")
 c2.metric("Fase atual", "Fase de Grupos" if phase == "groups" else "Mata-mata")
 c3.metric("Tabela 3º colocados (Anexo C)", "carregada" if alloc else "reserva (clusters)")
+
+_synced = results.get("synced_at")
+_auto_msg = st.session_state.get("_auto_sync_msg")
+if _synced:
+    _line = f"🔄 Última atualização automática: {_synced.replace('T', ' ')}"
+    if _auto_msg:
+        _line += f"  ·  {_auto_msg}"
+    st.caption(_line)
+elif auto_on:
+    st.caption("🔄 Atualização automática ligada — ainda sem dados "
+               "(sem internet ou jogos não disputados).")
 
 tab_and, tab_cla, tab_ko, tab_sim, tab_adm = st.tabs(
     ["🏆 Andamento", "📊 Classificação", "🔀 Mata-mata", "🎮 Simulador", "⚙️ Dados/Admin"]
@@ -291,20 +363,25 @@ with tab_adm:
     st.markdown(branding.section_title("Atualização automática (API)"), unsafe_allow_html=True)
     st.caption(tooltips.HELP["atualizar_api"])
 
-    fd_token = st.secrets.get("football_data", {}).get("token") if hasattr(st, "secrets") else None
-    af_key = st.secrets.get("api_football", {}).get("key") if hasattr(st, "secrets") else None
     st.write(f"ESPN: ✅ sem chave (sempre disponível)  ·  "
              f"football-data.org: {'🔑 configurada' if fd_token else '— sem chave'}  ·  "
              f"API-Football: {'🔑 configurada' if af_key else '— sem chave'}")
     if not fd_token and not af_key:
         st.caption("Nenhuma chave configurada — a atualização usa a API pública da ESPN.")
 
-    if st.button("🔄 Atualizar da API"):
+    st.checkbox(
+        "Atualizar automaticamente ao abrir o site", key="auto_sync_enabled",
+        value=st.session_state.get("auto_sync_enabled", True),
+        help=f"Ligado: busca da API ao entrar e a cada {AUTO_SYNC_MINUTES} min. "
+             "Edições manuais nunca são sobrescritas.",
+    )
+    if results.get("synced_at"):
+        st.caption(f"Última atualização: {results['synced_at'].replace('T', ' ')}")
+
+    if st.button("🔄 Atualizar agora"):
         with st.spinner("Buscando resultados..."):
-            records, msg = data_sources.fetch_results(fd_token, af_key)
-            n = state.import_api_results(results, records)
-            state.save_results(results)
-        st.success(f"{msg}  ({n} jogos atualizados)")
+            msg = run_api_sync(results, fd_token, af_key)
+        st.success(msg)
         st.rerun()
 
     st.markdown(branding.section_title("Editor manual — fase de grupos"), unsafe_allow_html=True)

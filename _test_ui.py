@@ -7,7 +7,10 @@ from __future__ import annotations
 import os
 import sys
 
-from streamlit.testing.v1 import AppTest
+# Desliga a auto-atualização da API durante o smoke test (sem rede).
+os.environ["COPA_DISABLE_AUTOSYNC"] = "1"
+
+from streamlit.testing.v1 import AppTest  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)

@@ -17,6 +17,15 @@ uvicorn api:app --reload    # API REST (http://localhost:8000)
 O painel e a API compartilham o **mesmo estado** (`data/results.json`): o que
 for salvo num lado aparece no outro.
 
+## Atualização automática
+
+Ao **abrir o site**, o app já busca os resultados mais recentes da API
+automaticamente (e revalida a cada 15 min enquanto a aba fica aberta) — não é
+preciso clicar em nada. Edições manuais nunca são sobrescritas, e o horário da
+última atualização aparece logo abaixo do cabeçalho. Dá para desligar a
+atualização automática na aba **⚙️ Dados/Admin** (e há um botão **🔄 Atualizar
+agora** para forçar na hora).
+
 ## Trazer os resultados reais (sem chave)
 
 Para puxar os placares dos jogos **já disputados** de uma fonte pública (ESPN,
@@ -88,7 +97,7 @@ pública da ESPN). As variáveis de ambiente `FOOTBALL_DATA_TOKEN` e
 
 | Aba | O que faz |
 |-----|-----------|
-| 🏆 **Andamento** | Status da competição, resultados recentes e próximos confrontos. |
+| 🏆 **Andamento** | Status da competição, resultados recentes, próximos confrontos e **horário da última atualização automática**. |
 | 📊 **Classificação** | Tabela ao vivo dos 12 grupos (top-2 🟢, melhores 3º 🟡) + ranking dos 3º colocados. |
 | 🔀 **Mata-mata** | Chaveamento dos dezesseis-avos à final, resolvido conforme os grupos terminam. |
 | 🎮 **Simulador** | Simula jogos **ainda não disputados** e recalcula tabela + chaveamento. Sensível à fase. |
