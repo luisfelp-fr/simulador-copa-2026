@@ -82,6 +82,25 @@ def name_of(code: str) -> str:
     return t.name if t else code
 
 
+# --- Bandeiras (ISO 3166-1 alpha-2; subdivisões do Reino Unido p/ ENG/SCO) --
+ISO2 = {
+    "MEX": "mx", "RSA": "za", "KOR": "kr", "CZE": "cz", "CAN": "ca", "SUI": "ch",
+    "QAT": "qa", "BIH": "ba", "BRA": "br", "MAR": "ma", "SCO": "gb-sct", "HAI": "ht",
+    "USA": "us", "PAR": "py", "AUS": "au", "TUR": "tr", "GER": "de", "ECU": "ec",
+    "CIV": "ci", "CUW": "cw", "NED": "nl", "JPN": "jp", "SWE": "se", "TUN": "tn",
+    "BEL": "be", "EGY": "eg", "IRN": "ir", "NZL": "nz", "ESP": "es", "URU": "uy",
+    "KSA": "sa", "CPV": "cv", "FRA": "fr", "SEN": "sn", "NOR": "no", "IRQ": "iq",
+    "ARG": "ar", "AUT": "at", "ALG": "dz", "JOR": "jo", "POR": "pt", "COL": "co",
+    "UZB": "uz", "COD": "cd", "ENG": "gb-eng", "CRO": "hr", "GHA": "gh", "PAN": "pa",
+}
+
+
+def flag_url(code: str | None, width: int = 40) -> str:
+    """URL da bandeira (flagcdn.com) de um código FIFA; '' se desconhecido."""
+    iso = ISO2.get(code or "")
+    return f"https://flagcdn.com/w{width}/{iso}.png" if iso else ""
+
+
 # --- Sedes (aproximadas) ----------------------------------------------------
 HOST_CITIES = [
     "Cidade do México", "Guadalajara", "Monterrey",

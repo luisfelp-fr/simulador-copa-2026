@@ -16,6 +16,7 @@ import pandas as pd
 import streamlit as st
 
 import branding
+import bracket
 import data_model as dm
 import data_sources
 import knockout
@@ -150,19 +151,27 @@ c1.metric("Jogos de grupo disputados", f"{played}/{total}")
 c2.metric("Fase atual", "Fase de Grupos" if phase == "groups" else "Mata-mata")
 c3.metric("Tabela 3º colocados (Anexo C)", "carregada" if alloc else "reserva (clusters)")
 
-_synced = results.get("synced_at")
-_auto_msg = st.session_state.get("_auto_sync_msg")
-if _synced:
-    _line = f"🔄 Última atualização automática: {_synced.replace('T', ' ')}"
-    if _auto_msg:
-        _line += f"  ·  {_auto_msg}"
-    st.caption(_line)
-elif auto_on:
-    st.caption("🔄 Atualização automática ligada — ainda sem dados "
-               "(sem internet ou jogos não disputados).")
+# Atualização da API direto na página inicial.
+_cinfo, _cbtn = st.columns([4, 1])
+with _cinfo:
+    _synced = results.get("synced_at")
+    _auto_msg = st.session_state.get("_auto_sync_msg")
+    if _synced:
+        _line = f"🔄 Última atualização: {_synced.replace('T', ' ')}"
+        if _auto_msg:
+            _line += f"  ·  {_auto_msg}"
+        st.caption(_line)
+    else:
+        st.caption("🔄 Atualização automática ligada — ao abrir o site os "
+                   "resultados são buscados na API.")
+with _cbtn:
+    if st.button("🔄 Atualizar agora", width="stretch"):
+        with st.spinner("Buscando resultados..."):
+            st.session_state._auto_sync_msg = run_api_sync(results, fd_token, af_key)
+        st.rerun()
 
-tab_and, tab_cla, tab_ko, tab_sim, tab_adm = st.tabs(
-    ["🏆 Andamento", "📊 Classificação", "🔀 Mata-mata", "🎮 Simulador", "⚙️ Dados/Admin"]
+tab_and, tab_cla, tab_sim = st.tabs(
+    ["🏆 Andamento", "📊 Classificação", "🎮 Simulador"]
 )
 
 
@@ -197,7 +206,20 @@ with tab_and:
             } for m in upcoming[:10]])
             st.dataframe(df, hide_index=True, width="stretch")
         else:
-            st.success("Fase de grupos encerrada — confira o mata-mata!")
+            st.success("Fase de grupos encerrada — confira o chaveamento abaixo!")
+
+    # ---- Chaveamento do mata-mata (visual, com bandeiras) ------------------ #
+    st.markdown(branding.section_title("Chaveamento do Mata-mata"), unsafe_allow_html=True)
+    games = knockout.compute_knockout(tables, gmatches, td.TEAMS,
+                                      state.ko_results(results), alloc)
+    champ = knockout.champion(games)
+    if champ:
+        st.success(f"🏆 Campeão: **{NAME(champ)}**")
+    if phase == "groups":
+        st.caption("A fase de grupos ainda não terminou — os confrontos são "
+                   "*projeções* (posições/3º colocados) até os 12 grupos se "
+                   "encerrarem. Use o **Simulador** para testar cenários.")
+    st.markdown(bracket.bracket_html(games), unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -225,28 +247,7 @@ with tab_cla:
 
 
 # --------------------------------------------------------------------------- #
-# Aba 3 — Mata-mata
-# --------------------------------------------------------------------------- #
-with tab_ko:
-    st.markdown(branding.section_title("Chaveamento da Fase Eliminatória"), unsafe_allow_html=True)
-    if phase == "groups":
-        st.info("A fase de grupos ainda não terminou — o chaveamento abaixo mostra "
-                "*placeholders* e só é definido quando os 12 grupos se encerram. "
-                "Use o **Simulador** para projetar cenários.")
-    games = knockout.compute_knockout(tables, gmatches, td.TEAMS,
-                                      state.ko_results(results), alloc)
-    champ = knockout.champion(games)
-    if champ:
-        st.success(f"🏆 Campeão: **{NAME(champ)}**")
-
-    for stage in KO_STAGE_ORDER:
-        st.markdown(f"**{dm.STAGE_LABELS[stage]}**  ·  _{td.KO_STAGE_DATES.get(stage, '')}_")
-        for no in sorted(g.no for g in games.values() if g.stage == stage):
-            st.markdown(game_line(games[no]))
-
-
-# --------------------------------------------------------------------------- #
-# Aba 4 — Simulador
+# Aba 3 — Simulador
 # --------------------------------------------------------------------------- #
 with tab_sim:
     st.markdown(branding.section_title("Simulador 'e-se'"), unsafe_allow_html=True)
@@ -297,11 +298,7 @@ with tab_sim:
         st.markdown(branding.section_title("Projeção do mata-mata"), unsafe_allow_html=True)
         sim_games = knockout.compute_knockout(sim_tables, eff, td.TEAMS, {}, alloc)
         if all(standings.group_complete(g, eff) for g in td.GROUP_ORDER):
-            for stage in [dm.R32, dm.R16]:
-                st.markdown(f"**{dm.STAGE_LABELS[stage]}**")
-                for no in sorted(x.no for x in sim_games.values() if x.stage == stage):
-                    st.markdown(game_line(sim_games[no]))
-            st.caption("Preencha também os jogos do mata-mata na aba após o encerramento real dos grupos.")
+            st.markdown(bracket.bracket_html(sim_games), unsafe_allow_html=True)
         else:
             st.info("Preencha **todos** os jogos de grupo restantes para projetar o chaveamento completo.")
 
@@ -354,35 +351,6 @@ with tab_sim:
                     st.session_state[f"sim_ko_{no}_so"] = (
                         g.home_code if lbl == g.home_label
                         else g.away_code if lbl == g.away_label else None)
-
-
-# --------------------------------------------------------------------------- #
-# Aba 5 — Dados / Admin
-# --------------------------------------------------------------------------- #
-with tab_adm:
-    st.markdown(branding.section_title("Atualização automática (API)"), unsafe_allow_html=True)
-    st.caption(tooltips.HELP["atualizar_api"])
-
-    st.write(f"ESPN: ✅ sem chave (sempre disponível)  ·  "
-             f"football-data.org: {'🔑 configurada' if fd_token else '— sem chave'}  ·  "
-             f"API-Football: {'🔑 configurada' if af_key else '— sem chave'}")
-    if not fd_token and not af_key:
-        st.caption("Nenhuma chave configurada — a atualização usa a API pública da ESPN.")
-
-    st.checkbox(
-        "Atualizar automaticamente ao abrir o site", key="auto_sync_enabled",
-        value=st.session_state.get("auto_sync_enabled", True),
-        help=f"Ligado: busca da API ao entrar e a cada {AUTO_SYNC_MINUTES} min. "
-             "Edições manuais nunca são sobrescritas.",
-    )
-    if results.get("synced_at"):
-        st.caption(f"Última atualização: {results['synced_at'].replace('T', ' ')}")
-
-    if st.button("🔄 Atualizar agora"):
-        with st.spinner("Buscando resultados..."):
-            msg = run_api_sync(results, fd_token, af_key)
-        st.success(msg)
-        st.rerun()
 
     st.markdown(branding.section_title("Editor manual — fase de grupos"), unsafe_allow_html=True)
     st.caption(tooltips.HELP["editor_manual"])

@@ -21,10 +21,10 @@ for salvo num lado aparece no outro.
 
 Ao **abrir o site**, o app já busca os resultados mais recentes da API
 automaticamente (e revalida a cada 15 min enquanto a aba fica aberta) — não é
-preciso clicar em nada. Edições manuais nunca são sobrescritas, e o horário da
-última atualização aparece logo abaixo do cabeçalho. Dá para desligar a
-atualização automática na aba **⚙️ Dados/Admin** (e há um botão **🔄 Atualizar
-agora** para forçar na hora).
+preciso clicar em nada. O horário da última atualização aparece logo abaixo do
+cabeçalho, ao lado de um botão **🔄 Atualizar agora** (na própria página
+inicial) para forçar na hora. Edições/placares vindos da API não sobrescrevem o
+que já existe manualmente.
 
 ## Trazer os resultados reais (sem chave)
 
@@ -93,15 +93,16 @@ A importação automática (`POST /api/refresh`) funciona **sem chave** (usa a A
 pública da ESPN). As variáveis de ambiente `FOOTBALL_DATA_TOKEN` e
 `API_FOOTBALL_KEY`, se definidas, têm prioridade.
 
-## As 5 abas
+## As 3 abas
 
 | Aba | O que faz |
 |-----|-----------|
-| 🏆 **Andamento** | Status da competição, resultados recentes, próximos confrontos e **horário da última atualização automática**. |
+| 🏆 **Andamento** | Status da competição, resultados recentes, próximos confrontos e o **chaveamento visual do mata-mata** (esquema em árvore, com bandeiras dos países e vencedor destacado). |
 | 📊 **Classificação** | Tabela ao vivo dos 12 grupos (top-2 🟢, melhores 3º 🟡) + ranking dos 3º colocados. |
-| 🔀 **Mata-mata** | Chaveamento dos dezesseis-avos à final, resolvido conforme os grupos terminam. |
 | 🎮 **Simulador** | Simula jogos **ainda não disputados** e recalcula tabela + chaveamento. Sensível à fase. |
-| ⚙️ **Dados/Admin** | Atualizar da API, editor manual de placares (grupos e mata-mata), limpar tudo. |
+
+A atualização da API fica **na própria página inicial** (botão **🔄 Atualizar
+agora** + atualização automática ao abrir o site), sem aba de administração.
 
 ## Comportamento progressivo
 
@@ -146,6 +147,7 @@ data_model.py     # dataclasses Team / Match / StandingRow
 tournament_data.py# semente real: grupos, fixtures, bracket, Anexo C clusters
 standings.py      # tabela de grupo + desempates FIFA + ranking dos 3º
 knockout.py       # monta dezesseis-avos e propaga até a final
+bracket.py        # HTML/CSS do chaveamento visual (árvore + bandeiras)
 data_sources.py   # adapters das APIs (normalização + resolução de nomes)
 state.py          # estado canônico (semente ← API ← manual) + persistência
 simulator.py      # overlay de simulação sobre o estado real
